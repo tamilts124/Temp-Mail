@@ -1,181 +1,209 @@
-import cloudscraper, sys, os
+import requests, os
+from sys import platform as plfm
+from bs4 import BeautifulSoup
 from time import sleep
-from ast import literal_eval
-from subprocess import getoutput
+import pickle
 
-temp_mail_tokens =[];temp_mail_messages =[]
-userAgent ='Mozilla/5.0 (X11; Windows x86_64; rv:91.0) Gecko/20100402 Firefox/91.0'
-scraper =cloudscraper.create_scraper(browser={'browser': 'firefox','platform': 'windows','mobile': False})
+class TempMail:
 
-def request_resourse(url, headers, method):
-    if method=='POST':response =scraper.post(url, headers=headers)
-    else:response =scraper.get(url, headers=headers)
-    return response
+    def __init__(self) -> None:
+        self.tokens ={}
+        self.mails ={}
+        self.messages ={}
+        useragent ='Mozilla/5.0 (X11; Windows x86_64; rv:91.0) Gecko/20100402 Firefox/91.0'
+        self.headers ={'User-Agent': useragent, 'Authorization': 'Bearer '}
 
-def create_id():
-    headers ={'User-Agent': userAgent,
-        'Authorization': 'Bearer'}
-    result =request_resourse('https://ext2.temp-mail.org/mailbox', headers, 'POST')
-    result =result.json();temp_mail_tokens.append(result);return result
+    def createmailid(self):
+        token =requests.post('https://ext2.temp-mail.org/mailbox', headers =self.headers).json()
+        self.tokens[token['mailbox']] =token['token']
+        return token['mailbox']
+    
+    def getmailid(self, token):
+        headers =self.headers.copy()
+        headers['Authorization'] =headers['Authorization']+token
+        mails =requests.get('https://ext2.temp-mail.org/messages', headers =headers).json()    
+        if mails.get('errorMessage'): return
+        mailid =mails['mailbox']
+        self.tokens[mailid] =token
+        self.mails[mailid] =mails['messages']
+        return mailid
 
-def view_mail(json_data, id):
-    headers ={'User-Agent': userAgent,
-        'Authorization': f'Bearer {json_data["token"]}'}
-    result =request_resourse(f'https://ext2.temp-mail.org/messages/{id}', headers, 'GET')    
-    result =result.json();return result
+    def getmails(self, mailid):
+        headers =self.headers.copy()
+        headers['Authorization'] =headers['Authorization']+self.tokens[mailid]
+        mails =requests.get('https://ext2.temp-mail.org/messages', headers =headers).json()    
+        if mails.get('errorMessage'): return
+        self.mails[mailid] =mails['messages']
+        return mails['messages']
+    
+    def getmessage(self, mailid, messageid):
+        headers =self.headers.copy()
+        headers['Authorization'] =headers['Authorization']+self.tokens[mailid]
+        message =requests.get('https://ext2.temp-mail.org/messages/'+messageid, headers =headers).json()    
+        self.messages[messageid] =message
+        return message
 
-def get_mails(json_data):
-    headers ={'User-Agent': userAgent,
-        'Authorization': f'Bearer {json_data["token"]}'}
-    result =request_resourse('https://ext2.temp-mail.org/messages', headers, 'GET')    
-    result =result.json();return result
+def main():
+    if os.path.exists('./TempMail.pkl'):
+        with open('./TempMail.pkl', 'rb') as pf:
+            tempmail =pickle.loads(pf.read())
+    else: tempmail =TempMail()
 
-def clear():
-    if sys.platform.lower().startswith('win'):os.system('cls')
-    else:os.system('clear')
+    def viewmail(message):
+        soup =BeautifulSoup(message, 'html.parser')
+        print('\n > TEXTS: \n')
+        for mess in soup.text.split('\n'):
+            mess =mess.strip('\t ')
+            if mess: print(mess)
+        messagesplits =message.split('"')
+        links =[]
+        for link in messagesplits:
+            if link.lower().startswith('http'): links.append(link+'\n')
+        if links:
+            print('\n > LINKS: \n')
+            print('', *links, '\n')
+        print('  01. Open With Browser')
+        print('  02. Go Back\n')
 
-def create_mew_id():print();print(create_id()['mailbox']);print()
-
-def total_messages(mess):
-    count =0
-    for messages in temp_mail_messages:
-        for message in messages['messages']:
-            count +=1
-            if mess == message:return count
-
-def show_all_ids():
-    print()
-    for id, token in enumerate(temp_mail_tokens):print(f'{id+1}. '+token['mailbox'])
-    print()
-
-def save_message(file_path, file_name, data):
-    if not os.path.exists(file_path):os.makedirs(file_path)
-    with open(file_path+file_name, 'w') as file:file.write(data)
-
-def show_mail(index):
-    global temp_mail_messages
-    print();token =temp_mail_tokens[index]
-    mess_info =get_mails(token)
-    temp_mail_messages.append(mess_info)
-    if mess_info.get('errorMessage'):print('Mail Id Expired!');print();return
-    if not mess_info.get('messages'):return
-    for mess in mess_info['messages']:
-        message =view_mail(token, mess['_id'])
-        print(f'{total_messages(mess)})')
-        print('           From: ' + message['from'])
-        print('             To: ' + message['mailbox'])
-        print('     Created At: ' + message['createdAt'])
-        if not message['subject']:print('        Subject: ' + '( no subject )')
-        else:print('        Subject: ' + message['subject'])
-        print('        Preview: ' + message['bodyPreview'])
-        if sys.platform.lower().startswith('win'):path=f'{getoutput(r"echo %userprofile%")}\Documents\messages\\'
-        else:path=f'{getoutput("echo $HOME")}/Documents/messages/'
-        path =path.replace('\\', '/')
-        print('        Message: ' + f'file:///{path}{mess["_id"]}.html')
-        save_message(path,  f'{mess["_id"]}.html', message['bodyHtml']);print()
-    print()
-
-def view_mails():
-    global temp_mail_messages
-    if not len(temp_mail_tokens):print();print('Mail Id Not Found, create new one!');print();sleep(3);return
-    clear();print('\n'*2)
-    print('    Temp Mail Ids');show_all_ids()
-    print(f'{len(temp_mail_tokens)+1}. View All Id\'s Mails')
-    print(f'{len(temp_mail_tokens)+2}. Clear Screen')
-    print(f'{len(temp_mail_tokens)+3}. Go Back');print()
-    print('Select Above Mail Id For View Mails');print()
-    while True:
-        option =input('> ')
-        try:option =int(option)
-        except:continue
-        if not 1<=option<=len(temp_mail_tokens)+3:continue
-        if option==len(temp_mail_tokens)+3:break
-        if option==len(temp_mail_tokens)+2:view_mails();break
-        elif option==len(temp_mail_tokens)+1:
-            temp_mail_messages=[]
-            for i in range(0, len(temp_mail_tokens)):show_mail(i)
-        else:temp_mail_messages=[];show_mail(option-1)
-
-def remove_id(index):
-    global temp_mail_tokens, temp_mail_messages
-    token =temp_mail_tokens[index]
-    for messages in temp_mail_messages:
-        if token.get('mailbox')==messages.get('mailbox'):temp_mail_messages.remove(messages)
-    temp_mail_tokens.remove(token)
-
-def remove_mail_ids():
-    if not len(temp_mail_tokens):print();print(' Mail Id Not Found, create new one!');print();sleep(3);return
-    clear();print('\n'*2)
-    print('    Temp Mail Ids');show_all_ids()
-    print(f'{len(temp_mail_tokens)+1}. Remove All Mail Ids')
-    print(f'{len(temp_mail_tokens)+2}. Go Back');print()
-    print('Select Above Mail Id to Removes');print()
-    while True:
-        option =input('> ')
-        try:option =int(option)
-        except:continue
-        if not 1<=option<=len(temp_mail_tokens)+2:continue
-        if option==len(temp_mail_tokens)+2:break
-        elif option==len(temp_mail_tokens)+1:
-            for i in range(len(temp_mail_tokens), 0, -1):remove_id(i-1)
-            remove_mail_ids();break
-        else:remove_id(option-1);remove_mail_ids();break;
-
-def save_mail_ids():
-    if sys.platform.lower().startswith('win'):file=f'{getoutput(r"echo %userprofile%")}\Documents\mailids.id'
-    else:file=f'{getoutput("echo $HOME")}/Documents/mailids.id'
-    file =file.replace('\\', '/')
-    file =open(file, 'w')
-    file.write(str(temp_mail_tokens));file.close()
-    print();print('Temp Mail Ids List stored! can Access Anytime!');print()
-
-def load_mail_ids():
-    global temp_mail_tokens
-    if sys.platform.lower().startswith('win'):file=f'{getoutput(r"echo %userprofile%")}\Documents\mailids.id'
-    else:file=f'{getoutput("echo $HOME")}/Documents/mailids.id'
-    file =file.replace('\\', '/')
-    if os.path.exists(file):
-        try:
-            if sys.platform.lower().startswith('win'):file =open(file, 'r')
-            else:file =open(file, 'r')
-            for item in literal_eval(file.read()):temp_mail_tokens.append(item)
-            file.close()
-        except Exception as e:print(e);exit(0)
-
-def selection():
-    while True:
-        option =input('>> ')
-        try:option =int(option)
-        except:break
-        if not 1<=option<=7:continue
-        if option==1:create_mew_id()
-        elif option==2:show_all_ids() 
-        elif option==3:view_mails();break
-        elif option==4:remove_mail_ids();break
-        elif option==5:save_mail_ids()
-        elif option==6:break
-        elif option==7:Exit()
-
-def Exit():
-    clear();print('\n'*2)
-    print(' <<< For More Follow Me @tamilts124 In Github >>>')
-    print();sleep(5);sys.exit(0)
-
-def Main():
-    try:
         while True:
-            clear();print();print()
-            print('                Temp Mail Ids Generator');print()
-            print('        1. Create New Mail Id')
-            print('        2. Show Mail Ids')
-            print('        3. View Mails')
-            print('        4. Remove Mail Ids')
-            print('        5. Save Mail Ids (Store)')
-            print('        6. Clear Screen')
-            print('        7. Exit');print()
-            print('    Note: May be Mails Automatically Deletes After 10 Minutes');print()
-            print();selection()
-    except KeyboardInterrupt:Exit()
+            choice =int(input(' >> '))
+            if choice==1:
+                with open('./message.html', 'wt') as m: m.write(message)
+                if plfm.startswith('win'): os.system('start message.html')
+                else: os.system('open message.html 2>/dev/null')
+            elif choice==2: break
 
-if __name__ =='__main__':
-    load_mail_ids();Main()
+    def managemails():
+
+        def viewmails(mailid):
+            
+            while True:
+                os.system('cls') if plfm.startswith('win') else os.system('clear')
+                mails =tempmail.getmails(mailid)
+                print(f'''\n{' '*8}Mails\n''')
+                print(' >', mailid, '\n')
+                if mails==None:
+                    print(' > Mail Id Expired!')
+                    sleep(3); return
+                for no, mail in enumerate(mails, start=1):
+                    no ='0'+str(no) if no <10 else str(no)
+                    print(' '+no+')','From: '+mail['from'])
+                    print('  Subject: '+mail['subject'])
+                    print('  Preview: '+mail['bodyPreview'], '\n')
+                tmail =len(mails)
+                print('', ['0'+str(tmail+1) if tmail+1 <10 else str(tmail+1)][0]+'. '+'Refresh')
+                print('', ['0'+str(tmail+2) if tmail+2 <10 else str(tmail+2)][0]+'. '+'View Cookie')
+                print('', ['0'+str(tmail+3) if tmail+3 <10 else str(tmail+3)][0]+'. '+'Go Back\n')
+                while True:
+                    choice =int(input(' >> '))
+                    if choice==tmail+1: break
+                    elif choice==tmail+2:
+                        print('\n', 'token: '+tempmail.tokens[mailid], '\n')
+                    elif choice==tmail+3: return
+                    elif 0<choice<=tmail:
+                        os.system('cls') if plfm.startswith('win') else os.system('clear')
+                        if tempmail.messages.get(mails[choice-1]['_id']):
+                            message =tempmail.messages[mails[choice-1]['_id']]['bodyHtml']
+                        else: message =tempmail.getmessage(mailid, mails[choice-1]['_id'])['bodyHtml']
+                        viewmail(message)
+                        break
+                
+        while True:
+            os.system('cls') if plfm.startswith('win') else os.system('clear')
+            print('''
+            Manage Mail Ids\n''')
+            for no, mailid in enumerate(tempmail.tokens, start=1):
+                no ='0'+str(no) if no <10 else str(no)
+                print('\t'+no+'. '+mailid)
+            tmailid =len(tempmail.tokens)
+            print('\n   ', ['0'+str(tmailid+1) if tmailid+1 <10 else str(tmailid+1)][0]+'. '+'Create Mail Ids')
+            print('   ', ['0'+str(tmailid+2) if tmailid+2 <10 else str(tmailid+2)][0]+'. '+'Delete Mail Ids')
+            print('   ', ['0'+str(tmailid+3) if tmailid+3 <10 else str(tmailid+3)][0]+'. '+'Add Mail Id')
+            print('   ', ['0'+str(tmailid+4) if tmailid+4 <10 else str(tmailid+4)][0]+'. '+'Go Back\n')
+
+            while True:
+                choice =int(input(' >> '))
+                if choice==tmailid+1:
+                    number =int(input('\n > How Many Mail Ids To Create: '))
+                    for num in range(number):
+                        print('  ',num+1, '\t', end='\r')
+                        tempmail.createmailid()
+                    break
+                elif choice==tmailid+2:
+                    numbers =input('\n > Which Are The Mail Ids To Delete: ')
+                    numbers =numbers.split()
+                    numbers =list(map(lambda n: int(n), numbers))
+                    numbers.sort(reverse =True)
+                    mailids =list(tempmail.tokens.keys())
+                    for num in numbers:
+                        mailid =mailids[num-1]
+                        tempmail.tokens.pop(mailid)
+                        if tempmail.mails.get(mailid):
+                            tempmail.mails.pop(mailid)
+                    break
+                elif choice==tmailid+3:
+                    token =input('\n > Enter Token Of Mail Id: ').strip('\n\t ')
+                    if not token: break
+                    mailid =tempmail.getmailid(token)
+                    if mailid==None:
+                        print('\n > Mail Id Expired!')
+                        sleep(3)
+                    break
+                elif choice==tmailid+4: return
+                elif 0<choice<=tmailid:
+                    mailid =list(tempmail.tokens.keys())[choice-1]
+                    viewmails(mailid)
+                    break
+
+    def offlinemails():
+
+        while True:
+            os.system('cls') if plfm.startswith('win') else os.system('clear')
+            print('''
+            Offline Mails
+            ''')
+            ids =list(tempmail.messages.keys())
+            mails =list(tempmail.messages.values())
+            for no, mail in enumerate(mails, start=1):
+                no ='0'+str(no) if no <10 else str(no)
+                print(' '+no+')','From: '+mail['from'])
+                print('       To: '+mail['mailbox'])
+                print('  Subject: '+mail['subject'])
+                print('  Preview: '+mail['bodyPreview'], '\n')
+            tmail =len(tempmail.messages)
+            print('', ['0'+str(tmail+1) if tmail+1 <10 else str(tmail+1)][0]+'. '+'Go Back\n')
+            while True:
+                choice =int(input(' >> '))
+                if choice==tmail+1: return
+                elif 0<choice<=tmail:
+                    os.system('cls') if plfm.startswith('win') else os.system('clear')
+                    message =tempmail.messages[ids[choice-1]]['bodyHtml']
+                    viewmail(message)
+                    break
+
+    def savestatus():
+        with open('./TempMail.pkl', 'wb') as pf:
+            pf.write(pickle.dumps(tempmail))
+        return True
+
+    while True:
+        os.system('cls') if plfm.startswith('win') else os.system('clear')
+        print('''
+            Temp-Mail.org
+        
+        01. Manage Mail Ids
+        02. Offline Messages
+        03. Save Status & Exit
+        ''')
+
+        try:
+            while True:
+                choice =int(input(' >> '))
+                if choice==1: managemails(); break
+                elif choice==2: offlinemails(); break
+                elif choice==3: savestatus() and exit()
+        except Exception: pass
+        except KeyboardInterrupt: break
+
+if __name__ == '__main__':
+    main()
